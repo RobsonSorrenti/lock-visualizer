@@ -45,6 +45,17 @@
                 android:value="Shows a music visualizer over the lock screen" />
         </service>
 
+        <!-- Só serve para o Android liberar a leitura do nome da música que está tocando -->
+        <service
+            android:name=".MediaListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

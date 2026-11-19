@@ -93,12 +93,27 @@ class MainActivity : Activity() {
         col.addView(seek(50, 250, (s.sensitivity * 100).toInt()) { Prefs.putInt(this, Prefs.K_SENS, it); preview.reload() })
 
         col.addView(check("Mostrar relógio", s.showClock) { Prefs.putBool(this, Prefs.K_CLOCK, it) })
+        col.addView(check("Mostrar nome da música e artista", s.showTrack) {
+            Prefs.putBool(this, Prefs.K_TRACK, it)
+            if (it) askNotificationAccess()
+        })
         col.addView(check("Manter a tela acesa enquanto toca (gasta mais bateria)", s.keepScreenOn) {
             Prefs.putBool(this, Prefs.K_SCREEN_ON, it)
         })
 
         col.addView(check("Girar para horizontal junto com o celular", s.rotate) {
             Prefs.putBool(this, Prefs.K_ROTATE, it)
+        })
+
+        col.addView(TextView(this).apply {
+            text = "Na tela de bloqueio:\n" +
+                "• Deslize 1 dedo para o lado: troca o estilo\n" +
+                "• Deslize 1 dedo para cima/baixo: troca as cores\n" +
+                "• Deslize 2 dedos para o lado: próxima/anterior música\n" +
+                "• Toque duas vezes: sair"
+            textSize = 13f
+            setTextColor(0xAAFFFFFF.toInt())
+            setPadding(0, dp(14), 0, 0)
         })
 
         col.addView(Button(this).apply {
@@ -156,7 +171,26 @@ class MainActivity : Activity() {
                 }
                 .setNegativeButton("Agora não", null)
                 .show()
+            return
         }
+        if (Prefs.load(this).showTrack) askNotificationAccess()
+    }
+
+    private fun askNotificationAccess() {
+        if (MediaListener.hasAccess(this)) return
+        AlertDialog.Builder(this)
+            .setTitle("Nome da música")
+            .setMessage(
+                "Para mostrar o nome da música e do artista, ative o Lock Visualizer em " +
+                    "\"Acesso a notificações\" na próxima tela. O app só lê qual música está tocando.\n\n" +
+                    "Se o Android disser \"Configuração restrita\": vá em Configurações > Apps > " +
+                    "Lock Visualizer > menu ⋮ > \"Permitir configurações restritas\" e tente de novo."
+            )
+            .setPositiveButton("Abrir") { _, _ ->
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+            .setNegativeButton("Agora não", null)
+            .show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -176,6 +210,8 @@ class MainActivity : Activity() {
             !audio -> "⚠ Falta permissão de áudio (necessária para captar o ritmo)."
             !preview.isCapturing -> "⚠ Este celular não liberou a captura do áudio."
             !overlay -> "⚠ Falta \"Sobrepor a outros apps\" para abrir sozinho no bloqueio."
+            Prefs.load(this).showTrack && !MediaListener.hasAccess(this) ->
+                "⚠ Falta \"Acesso a notificações\" para mostrar o nome da música."
             else -> "✓ Tudo pronto."
         }
         status.text = msg

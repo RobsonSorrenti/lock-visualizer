@@ -13,7 +13,8 @@ data class VisSettings(
     val sensitivity: Float,
     val showClock: Boolean,
     val keepScreenOn: Boolean,
-    val rotate: Boolean,   // gira para horizontal junto com o celular
+    val rotate: Boolean,
+    val showTrack: Boolean, // nome da música e artista   // gira para horizontal junto com o celular
 )
 
 object Prefs {
@@ -26,6 +27,7 @@ object Prefs {
     const val K_CLOCK = "clock"
     const val K_SCREEN_ON = "screen_on"
     const val K_ROTATE = "rotate"
+    const val K_TRACK = "track"
 
     val STYLES = listOf("LED (blocos)", "Barras", "Espelhado", "Circular")
     val PALETTES = listOf("Arco-íris", "Cor única", "Fogo", "Oceano", "Neon")
@@ -45,6 +47,7 @@ object Prefs {
             showClock = p.getBoolean(K_CLOCK, true),
             keepScreenOn = p.getBoolean(K_SCREEN_ON, false),
             rotate = p.getBoolean(K_ROTATE, true),
+            showTrack = p.getBoolean(K_TRACK, true),
         )
     }
 
