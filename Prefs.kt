@@ -6,8 +6,8 @@ import android.content.SharedPreferences
 /** Todas as configurações que o usuário pode mudar. */
 data class VisSettings(
     val enabled: Boolean,
-    val style: Int,        // 0 LED, 1 Barras, 2 Espelhado, 3 Circular
-    val palette: Int,      // 0 Arco-íris, 1 Cor única, 2 Fogo, 3 Oceano, 4 Neon
+    val style: Int,        // índice em STYLES
+    val palette: Int,      // índice em PALETTES
     val hue: Float,        // 0..360, usado na "Cor única"
     val bars: Int,         // quantidade de barras
     val sensitivity: Float,
@@ -29,8 +29,11 @@ object Prefs {
     const val K_ROTATE = "rotate"
     const val K_TRACK = "track"
 
-    val STYLES = listOf("LED (blocos)", "Barras", "Espelhado", "Circular")
-    val PALETTES = listOf("Arco-íris", "Cor única", "Fogo", "Oceano", "Neon")
+    val STYLES = listOf(
+        "LED (blocos)", "Barras", "Espelhado", "Circular",
+        "Explosão", "Chamas", "Clássico", "Perspectiva 3D", "Onda simétrica",
+    )
+    val PALETTES = listOf("Arco-íris", "Cor única", "Fogo", "Oceano", "Neon", "VU (verde/amarelo/vermelho)", "Pôr do sol")
 
     private fun sp(c: Context): SharedPreferences =
         c.getSharedPreferences("visualizer", Context.MODE_PRIVATE)
