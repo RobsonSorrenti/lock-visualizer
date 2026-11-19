@@ -14,7 +14,9 @@ data class VisSettings(
     val showClock: Boolean,
     val keepScreenOn: Boolean,
     val rotate: Boolean,
-    val showTrack: Boolean, // nome da música e artista   // gira para horizontal junto com o celular
+    val showTrack: Boolean, // nome da música e artista
+    val neonText: String,   // texto do estilo Texto neon
+    val imageUri: String,   // imagem/GIF do estilo Minha imagem   // gira para horizontal junto com o celular
 )
 
 object Prefs {
@@ -28,10 +30,14 @@ object Prefs {
     const val K_SCREEN_ON = "screen_on"
     const val K_ROTATE = "rotate"
     const val K_TRACK = "track"
+    const val K_NEON = "neon_text"
+    const val K_IMAGE = "image_uri"
 
     val STYLES = listOf(
         "LED (blocos)", "Barras", "Espelhado", "Circular",
         "Explosão", "Chamas", "Clássico", "Perspectiva 3D", "Onda simétrica",
+        "Fogos de artifício", "Cruz de luz", "Monitor cardíaco", "Vórtice", "Coração pulsando",
+        "Texto neon", "Minha imagem/GIF", "ECG clássico", "Estrada neon",
     )
     val PALETTES = listOf("Arco-íris", "Cor única", "Fogo", "Oceano", "Neon", "VU (verde/amarelo/vermelho)", "Pôr do sol")
 
@@ -51,9 +57,12 @@ object Prefs {
             keepScreenOn = p.getBoolean(K_SCREEN_ON, false),
             rotate = p.getBoolean(K_ROTATE, true),
             showTrack = p.getBoolean(K_TRACK, true),
+            neonText = p.getString(K_NEON, "NEON") ?: "NEON",
+            imageUri = p.getString(K_IMAGE, "") ?: "",
         )
     }
 
     fun putInt(c: Context, key: String, value: Int) = sp(c).edit().putInt(key, value).apply()
+    fun putString(c: Context, key: String, value: String) = sp(c).edit().putString(key, value).apply()
     fun putBool(c: Context, key: String, value: Boolean) = sp(c).edit().putBoolean(key, value).apply()
 }

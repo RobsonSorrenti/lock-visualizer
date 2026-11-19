@@ -5,6 +5,15 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.RadialGradient
+import android.graphics.Typeface
+import android.graphics.drawable.Animatable
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.net.Uri
+import android.os.Build
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Matrix
@@ -24,6 +33,7 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Lê o áudio que está saindo do celular (Spotify, YouTube Music, qualquer app)
@@ -40,7 +50,13 @@ class VisualizerView @JvmOverloads constructor(
 
     @Volatile private var target = FloatArray(0)   // vem da thread do Visualizer
     @Volatile private var lastSound = 0L
-    @Volatile private var wave = ByteArray(0)        // forma de onda (para os estilos com "onda")
+    @Volatile private var wave = ByteArray(0)
+    private var bass = 0f
+    private var bassAvg = 0f
+    private var beat = false
+    private var lastBeat = 0L
+    private var lastFrame = 0L
+    private var frameDt = 0.016f        // forma de onda (para os estilos com "onda")
     private var levels = FloatArray(0)
     private var peaks = FloatArray(0)
 
@@ -152,8 +168,20 @@ class VisualizerView @JvmOverloads constructor(
             peaks[i] = if (levels[i] >= peaks[i]) levels[i] else max(0f, peaks[i] - 0.007f)
         }
 
+        // detecção de batida (graves subindo de repente)
+        val nb = max(1, n / 6)
+        var b = 0f
+        for (i in 0 until nb) b += levels[i]
+        bass = b / nb
+        bassAvg = bassAvg * 0.96f + bass * 0.04f
+        beat = !idle && bass > 0.3f && bass > bassAvg * 1.25f && now - lastBeat > 220
+        if (beat) lastBeat = now
+        frameDt = if (lastFrame == 0L) 0.016f else ((now - lastFrame) / 1000f).coerceIn(0f, 0.1f)
+        lastFrame = now
+
         paint.style = Paint.Style.FILL
         paint.strokeWidth = 0f
+        paint.shader = null
         canvas.save()
         canvas.translate(0f, contentTop)
         when (settings.style) {
@@ -165,7 +193,16 @@ class VisualizerView @JvmOverloads constructor(
             5 -> drawFlames(canvas, n)
             6 -> drawClassic(canvas, n)
             7 -> drawPerspective(canvas, n, now, idle)
-            else -> drawSymWave(canvas, n)
+            8 -> drawSymWave(canvas, n)
+            9 -> drawFireworks(canvas, now, idle)
+            10 -> drawCross(canvas, n, now)
+            11 -> drawEcg(canvas, now, idle)
+            12 -> drawVortex(canvas, n, now, idle)
+            13 -> drawHeart(canvas)
+            14 -> drawNeon(canvas, n)
+            15 -> drawImage(canvas, n)
+            16 -> drawEcgClassic(canvas, now, idle)
+            else -> drawNeonRoad(canvas, n, now)
         }
         canvas.restore()
         if (running) postInvalidateOnAnimation()
@@ -528,5 +565,590 @@ class VisualizerView @JvmOverloads constructor(
             c.drawRoundRect(x, mid - half, x + barW, mid + half, barW / 2, barW / 2, paint)
         }
         paint.shader = null
+    }
+
+    // ================= Estilos novos (parte 2) =================
+
+    private fun withAlpha(col: Int, a: Int) = (col and 0x00FFFFFF) or (a.coerceIn(0, 255) shl 24)
+    private fun mix(a: Int, b: Int, t: Float): Int {
+        val r = (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt()
+        val g = (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt()
+        val bl = (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt()
+        return Color.rgb(r, g, bl)
+    }
+
+    // ---- Fogos de artifício: uma explosão de faíscas a cada batida ----
+    private class Spark(var x: Float, var y: Float, var vx: Float, var vy: Float, var life: Int, val total: Int, val color: Int)
+    private val sparks = ArrayList<Spark>()
+    private var lastBurst = 0L
+
+    private fun drawFireworks(c: Canvas, now: Long, idle: Boolean) {
+        val w = width.toFloat(); val h = areaH
+        val due = now - lastBurst > (if (idle) 2500 else 1300)
+        if (beat || due) {
+            lastBurst = now
+            val cx = w * (0.2f + 0.6f * rnd.nextFloat())
+            val cy = h * (0.15f + 0.35f * rnd.nextFloat())
+            val count = if (idle) 45 else (70 + bass * 110).toInt()
+            val f0 = rnd.nextFloat()
+            val power = (if (idle) 2.5f else 3f + bass * 5f) * density
+            repeat(count) {
+                val a = rnd.nextFloat() * 2f * PI.toFloat()
+                val sp = power * (0.3f + 0.7f * rnd.nextFloat())
+                val life = 45 + rnd.nextInt(45)
+                val col = colorF((f0 + rnd.nextFloat() * 0.15f) % 1f, 0.4f + 0.6f * rnd.nextFloat())
+                sparks.add(Spark(cx, cy, cos(a) * sp, sin(a) * sp, life, life, col))
+            }
+            if (sparks.size > 1200) sparks.subList(0, sparks.size - 1200).clear()
+        }
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = 1.6f * density
+        val g = 0.045f * density
+        val it = sparks.iterator()
+        while (it.hasNext()) {
+            val p = it.next()
+            p.vx *= 0.985f
+            p.vy = p.vy * 0.985f + g
+            p.x += p.vx; p.y += p.vy
+            p.life--
+            if (p.life <= 0 || p.y > h) { it.remove(); continue }
+            val t = p.life.toFloat() / p.total
+            paint.color = p.color
+            paint.alpha = (255 * t).toInt()
+            c.drawLine(p.x - p.vx * 5, p.y - p.vy * 5, p.x, p.y, paint)
+            if (p.life % 7 == 0) {                         // brilho piscando, tipo estrelinha
+                paint.color = Color.WHITE
+                paint.alpha = (200 * t).toInt()
+                c.drawPoint(p.x, p.y, paint)
+            }
+        }
+        paint.style = Paint.Style.FILL
+    }
+
+    // ---- Cruz de luz: cruz iluminada sobre um fundo azul com estrelas e feixes de luz ----
+    private var stars = FloatArray(0)
+
+    private fun drawCross(c: Canvas, n: Int, now: Long) {
+        val w = width.toFloat(); val h = areaH
+        val glow = colorF(0.7f, 0.5f)
+        paint.color = 0xFF04060D.toInt()
+        c.drawRect(0f, 0f, w, h, paint)
+        // névoa colorida
+        paint.shader = RadialGradient(w * 0.6f, h * 0.45f, max(w, h) * 0.65f,
+            intArrayOf(withAlpha(glow, (80 + bass * 70).toInt()), withAlpha(glow, 25), Color.TRANSPARENT),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, paint)
+        paint.shader = null
+        // feixes de luz vindos de cima
+        val mids = levels[n / 2]
+        for (k in 0 until 5) {
+            val x = w * (0.12f + k * 0.19f)
+            val sway = sin(now / 2500.0 + k).toFloat() * w * 0.04f
+            path.reset()
+            path.moveTo(x - w * 0.015f, 0f)
+            path.lineTo(x + w * 0.015f, 0f)
+            path.lineTo(x + sway + w * 0.07f, h)
+            path.lineTo(x + sway - w * 0.07f, h)
+            path.close()
+            paint.color = Color.WHITE
+            paint.alpha = (10 + mids * 35).toInt()
+            c.drawPath(path, paint)
+        }
+        // estrelas piscando com os agudos
+        if (stars.isEmpty()) {
+            stars = FloatArray(90 * 4)
+            for (i in 0 until 90) {
+                stars[i * 4] = rnd.nextFloat(); stars[i * 4 + 1] = rnd.nextFloat()
+                stars[i * 4 + 2] = 0.6f + rnd.nextFloat() * 1.4f; stars[i * 4 + 3] = rnd.nextFloat() * 6.28f
+            }
+        }
+        var treble = 0f
+        for (i in n * 2 / 3 until n) treble += levels[i]
+        treble /= max(1, n - n * 2 / 3)
+        paint.color = Color.WHITE
+        for (i in 0 until 90) {
+            val tw = 0.5f + 0.5f * sin(now / 400.0 + stars[i * 4 + 3]).toFloat()
+            paint.alpha = (60 + tw * 120 * (0.4f + treble)).toInt()
+            c.drawCircle(stars[i * 4] * w, stars[i * 4 + 1] * h, stars[i * 4 + 2] * density, paint)
+        }
+        // a cruz
+        val m = min(w, h)
+        val sc = 1f + bass * 0.1f
+        val cx = w / 2; val cy = h * 0.5f
+        val arm = m * 0.05f * sc
+        val vh = m * 0.36f * sc
+        val hw = m * 0.24f * sc
+        val barY = cy - vh * 0.22f
+        paint.shader = RadialGradient(cx, barY, vh * 0.95f,
+            intArrayOf(withAlpha(mix(glow, Color.WHITE, 0.6f), (90 + bass * 140).toInt()), Color.TRANSPARENT),
+            null, Shader.TileMode.CLAMP)
+        c.drawCircle(cx, barY, vh * 0.95f, paint)
+        paint.shader = null
+        val r = arm * 0.15f
+        paint.color = Color.BLACK; paint.alpha = 110                     // sombra
+        val sx = arm * 0.45f; val sy = arm * 0.7f
+        c.drawRoundRect(cx - arm / 2 + sx, cy - vh / 2 + sy, cx + arm / 2 + sx, cy + vh / 2 + sy, r, r, paint)
+        c.drawRoundRect(cx - hw / 2 + sx, barY - arm / 2 + sy, cx + hw / 2 + sx, barY + arm / 2 + sy, r, r, paint)
+        paint.color = mix(0xFFF3E6C8.toInt(), Color.WHITE, bass * 0.6f)
+        c.drawRoundRect(cx - arm / 2, cy - vh / 2, cx + arm / 2, cy + vh / 2, r, r, paint)
+        c.drawRoundRect(cx - hw / 2, barY - arm / 2, cx + hw / 2, barY + arm / 2, r, r, paint)
+    }
+
+    // ---- Monitor cardíaco: grade em 3D e uma linha que desenha corações nas batidas ----
+    private val ecg = FloatArray(240)
+    private val heartQueue = ArrayDeque<Float>()
+    private var lastHeart = 0L
+
+    private fun queueHeart(amp: Float) {
+        val len = 52
+        for (t in 0 until len) {
+            val x = -2f + 4f * t / (len - 1)
+            val ax = Math.abs(x)
+            val top = sqrt(max(0f, 1f - (ax - 1f) * (ax - 1f)))
+            val bottom = -2.2f * (1f - ax / 2f).pow(1.2f)
+            val v = (top + bottom) / 2 + (top - bottom) / 2 * sin(t * 2.6f)
+            heartQueue.addLast(v / 2.2f * amp)
+        }
+    }
+
+    private fun drawEcg(c: Canvas, now: Long, idle: Boolean) {
+        val w = width.toFloat(); val h = areaH
+        if (heartQueue.isEmpty() && (beat || now - lastHeart > (if (idle) 2200 else 1600))) {
+            lastHeart = now
+            queueHeart(0.55f + bass * 0.45f)
+        }
+        repeat(2) {
+            val v = if (heartQueue.isNotEmpty()) heartQueue.removeFirst()
+            else waveSample(rnd.nextInt(64), 64, idle, now) * 0.03f + (rnd.nextFloat() - 0.5f) * 0.02f
+            System.arraycopy(ecg, 0, ecg, 1, ecg.size - 1)
+            ecg[0] = v
+        }
+        val mid = h / 2
+        val x0 = w * 0.05f; val x1 = w * 0.99f
+        val h0 = h * 0.42f; val h1 = h * 0.12f
+        fun frac(u: Float): Float { val z = 1f + 2f * u; return (1f - 1f / z) / (1f - 1f / 3f) }
+        val line = colorF(0.35f, 0.6f)
+        // grade
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.2f * density
+        paint.color = withAlpha(mix(line, Color.BLACK, 0.55f), 200)
+        for (k in 0..24) {
+            val fr = frac(k / 24f)
+            val x = x0 + (x1 - x0) * fr
+            val hh = h0 + (h1 - h0) * fr
+            c.drawLine(x, mid - hh, x, mid + hh, paint)
+        }
+        for (k in -7..7) {
+            val v = k / 7f
+            c.drawLine(x0, mid + v * h0, x1, mid + v * h1, paint)
+        }
+        // linha do coração
+        path.reset()
+        for (i in ecg.indices) {
+            val fr = frac(i / (ecg.size - 1f))
+            val x = x0 + (x1 - x0) * fr
+            val hh = h0 + (h1 - h0) * fr
+            val y = mid - ecg[i] * hh
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        paint.color = withAlpha(line, 70)
+        paint.strokeWidth = 5f * density
+        c.drawPath(path, paint)
+        paint.color = mix(line, Color.WHITE, 0.25f)
+        paint.strokeWidth = 1.6f * density
+        c.drawPath(path, paint)
+        paint.style = Paint.Style.FILL
+    }
+
+    // ---- Vórtice: anéis ondulados formando um túnel que gira e acelera com a música ----
+    private var vortexPhase = 0f
+
+    private fun drawVortex(c: Canvas, n: Int, now: Long, idle: Boolean) {
+        val w = width.toFloat(); val h = areaH
+        val cx = w / 2; val cy = h / 2
+        val bigR = hypot(w, h) / 2 * 1.15f
+        val avg = avgLevel(n)
+        val main = colorF(0.7f, 0.5f)
+        val accent = colorF(0.08f, 0.9f)
+        vortexPhase = (vortexPhase + frameDt * (0.35f + avg * 1.6f)) % 1f
+        paint.shader = RadialGradient(cx, cy, bigR * 0.28f * (1f + bass * 0.6f),
+            intArrayOf(withAlpha(mix(main, Color.WHITE, 0.6f), 230), withAlpha(main, 60), Color.TRANSPARENT),
+            floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, bigR * 0.28f * (1f + bass * 0.6f), paint)
+        paint.shader = null
+        paint.style = Paint.Style.STROKE
+        val rings = 16
+        val pts = 72
+        val rot = now / 4000.0
+        for (k in 0 until rings) {
+            val depth = ((k + vortexPhase) % rings) / rings      // 0 = centro, 1 = borda
+            val r = bigR * depth.pow(1.8f)
+            if (r < 2f) continue
+            val base = if (k % 5 == 2) accent else main
+            for (pass in 0 until 3) {
+                path.reset()
+                for (j in 0..pts) {
+                    val a = j * 2 * PI / pts
+                    val wob = sin(a * 3 + rot * 2 + pass + k).toFloat() * 0.08f +
+                        sin(a * 5 - rot * 3 + k * 0.7).toFloat() * 0.05f +
+                        waveSample(j % pts, pts, idle, now) * 0.06f * (0.3f + avg)
+                    val rr = r * (1f + wob)
+                    val x = cx + cos(a + rot + k * 0.3).toFloat() * rr
+                    val y = cy + sin(a + rot + k * 0.3).toFloat() * rr
+                    if (j == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                paint.color = base
+                paint.alpha = (sin(depth * PI).toFloat() * 190 / (pass + 1)).toInt()
+                paint.strokeWidth = (0.8f + depth * 1.6f) * density
+                c.drawPath(path, paint)
+            }
+        }
+        paint.style = Paint.Style.FILL
+    }
+
+    // ---- Coração pulsando: bate junto com os graves e solta ondas ----
+    private val heartShape = Path().apply {
+        for (i in 0..120) {
+            val t = i / 120.0 * 2 * PI
+            val x = (16 * sin(t).pow(3)) / 17.0
+            val y = -(13 * cos(t) - 5 * cos(2 * t) - 2 * cos(3 * t) - cos(4 * t)) / 17.0
+            if (i == 0) moveTo(x.toFloat(), y.toFloat()) else lineTo(x.toFloat(), y.toFloat())
+        }
+        close()
+    }
+    private val heartRings = ArrayList<FloatArray>()   // [escala, transparência]
+
+    private fun drawHeart(c: Canvas) {
+        val w = width.toFloat(); val h = areaH
+        val col = colorF(0f, 0.5f)
+        val size = min(w, h) * 0.3f * (0.88f + bass * 0.35f)
+        if (beat) heartRings.add(floatArrayOf(size, 200f))
+        c.save()
+        c.translate(w / 2, h / 2)
+        // ondas
+        paint.style = Paint.Style.STROKE
+        val it = heartRings.iterator()
+        while (it.hasNext()) {
+            val r = it.next()
+            r[0] += 3f * density
+            r[1] *= 0.94f
+            if (r[1] < 4f) { it.remove(); continue }
+            c.save()
+            c.scale(r[0], r[0])
+            paint.color = col
+            paint.alpha = r[1].toInt()
+            paint.strokeWidth = 2.5f * density / r[0]
+            c.drawPath(heartShape, paint)
+            c.restore()
+        }
+        paint.style = Paint.Style.FILL
+        // coração
+        c.scale(size, size)
+        paint.shader = RadialGradient(-0.35f, -0.4f, 1.5f,
+            intArrayOf(mix(col, Color.WHITE, 0.45f), col, mix(col, Color.BLACK, 0.55f)),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        c.drawPath(heartShape, paint)
+        paint.shader = null
+        paint.color = Color.WHITE
+        paint.alpha = 70
+        c.drawOval(-0.62f, -0.62f, -0.25f, -0.4f, paint)
+        c.restore()
+    }
+
+    // ---- Texto neon: o texto que você escrever, brilhando no ritmo ----
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
+        textAlign = Paint.Align.CENTER
+    }
+
+    private fun drawNeon(c: Canvas, n: Int) {
+        val w = width.toFloat(); val h = areaH
+        val lines = settings.neonText.ifBlank { "NEON" }.split("|").map { it.trim() }.take(3)
+        val avg = avgLevel(n)
+        var size = h * 0.24f / lines.size
+        textPaint.textSize = size
+        val widest = lines.maxOf { textPaint.measureText(it) }
+        if (widest > w * 0.86f) size *= w * 0.86f / widest
+        size *= 1f + bass * 0.08f
+        textPaint.textSize = size
+        val glowStrength = 0.35f + avg * 1.2f
+        val totalH = size * 1.15f * lines.size
+        lines.forEachIndexed { i, text ->
+            val y = h / 2 - totalH / 2 + size * 1.15f * (i + 0.8f)
+            textPaint.shader = null
+            textPaint.style = Paint.Style.STROKE
+            for (g in 4 downTo 1) {                                    // brilho em volta
+                textPaint.strokeWidth = size * 0.07f * g
+                textPaint.color = withAlpha(colorF(0.5f, 0.5f), (26 * glowStrength * (5 - g)).toInt())
+                c.drawText(text, w / 2, y, textPaint)
+            }
+            textPaint.strokeWidth = size * 0.06f                       // contorno
+            textPaint.color = mix(colorF(0.2f, 0.8f), Color.WHITE, 0.3f)
+            c.drawText(text, w / 2, y, textPaint)
+            textPaint.style = Paint.Style.FILL                         // preenchimento em degradê
+            textPaint.shader = LinearGradient(0f, y - size * 0.8f, 0f, y + size * 0.1f,
+                intArrayOf(colorF(0f, 1f), colorF(0.5f, 0.6f), colorF(1f, 0f)), null, Shader.TileMode.CLAMP)
+            c.drawText(text, w / 2, y, textPaint)
+            textPaint.shader = null
+        }
+    }
+
+    // ---- Minha imagem/GIF: a imagem escolhida pulsa no ritmo, com barras embaixo ----
+    private var imgDrawable: Drawable? = null
+    private var imgUri: String? = null
+
+    private fun loadImage() {
+        if (settings.imageUri == imgUri) return
+        imgUri = settings.imageUri
+        (imgDrawable as? Animatable)?.stop()
+        imgDrawable = null
+        if (settings.imageUri.isEmpty()) return
+        try {
+            val uri = Uri.parse(settings.imageUri)
+            val d: Drawable? = if (Build.VERSION.SDK_INT >= 28) {
+                ImageDecoder.decodeDrawable(ImageDecoder.createSource(context.contentResolver, uri))
+            } else {
+                context.contentResolver.openInputStream(uri)?.use { s ->
+                    BitmapFactory.decodeStream(s)?.let { BitmapDrawable(resources, it) }
+                }
+            }
+            d?.callback = this
+            (d as? Animatable)?.start()
+            imgDrawable = d
+        } catch (_: Exception) {
+            imgDrawable = null
+        }
+    }
+
+    override fun verifyDrawable(who: Drawable): Boolean = who === imgDrawable || super.verifyDrawable(who)
+
+    private fun drawImage(c: Canvas, n: Int) {
+        val w = width.toFloat(); val h = areaH
+        loadImage()
+        val d = imgDrawable
+        if (d == null) {
+            textPaint.shader = null
+            textPaint.style = Paint.Style.FILL
+            textPaint.color = 0xAAFFFFFF.toInt()
+            textPaint.textSize = 16 * density
+            c.drawText("Escolha uma imagem ou GIF", w / 2, h * 0.45f, textPaint)
+            c.drawText("nas configurações do app", w / 2, h * 0.45f + 22 * density, textPaint)
+        } else {
+            val iw = if (d.intrinsicWidth > 0) d.intrinsicWidth.toFloat() else w
+            val ih = if (d.intrinsicHeight > 0) d.intrinsicHeight.toFloat() else h
+            val fit = min(w * 0.85f / iw, h * 0.68f / ih) * (1f + bass * 0.12f)
+            val dw = iw * fit; val dh = ih * fit
+            val cx = w / 2; val cy = h * 0.4f
+            d.setBounds((cx - dw / 2).toInt(), (cy - dh / 2).toInt(), (cx + dw / 2).toInt(), (cy + dh / 2).toInt())
+            d.draw(c)
+        }
+        // barras pequenas embaixo
+        val base = h * 0.97f
+        val maxH = h * 0.16f
+        val colW = w / n
+        val gap = colW * 0.3f
+        for (i in 0 until n) {
+            paint.color = colorAt(i, n, levels[i])
+            val top = base - max(levels[i] * maxH, 2 * density)
+            c.drawRoundRect(i * colW + gap / 2, top, (i + 1) * colW - gap / 2, base, colW / 3, colW / 3, paint)
+        }
+    }
+
+    // ================= Estilos novos (parte 3) =================
+
+    // ---- ECG clássico: traçado de monitor de hospital varrendo a tela ----
+    private var sweep = FloatArray(0)
+    private var sweepPos = 0
+    private val beatQueue = ArrayDeque<Float>()
+    private var lastPulse = 0L
+
+    private fun gauss(t: Float, mu: Float, sd: Float) = kotlin.math.exp(-((t - mu) * (t - mu)) / (2 * sd * sd))
+
+    private fun queuePulse(amp: Float) {
+        for (i in 0 until 50) {
+            val t = i.toFloat()
+            val v = 0.12f * gauss(t, 6f, 3f) - 0.12f * gauss(t, 17f, 1f) + 1f * gauss(t, 20f, 1.2f) -
+                0.35f * gauss(t, 23f, 1.2f) + 0.25f * gauss(t, 38f, 5f)
+            beatQueue.addLast(v * amp)
+        }
+    }
+
+    private fun drawEcgClassic(c: Canvas, now: Long, idle: Boolean) {
+        val w = width.toFloat(); val h = areaH
+        val step = 2 * density
+        val cols = max(10, (w / step).toInt())
+        if (sweep.size != cols) { sweep = FloatArray(cols); sweepPos = 0 }
+        val line = colorF(0.35f, 0.6f)
+        // fundo verde escuro com centro mais claro
+        paint.shader = RadialGradient(w / 2, h / 2, max(w, h) * 0.7f,
+            intArrayOf(mix(line, Color.BLACK, 0.8f), mix(line, Color.BLACK, 0.93f)), null, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, paint)
+        paint.shader = null
+        // grade
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1f * density
+        paint.color = 0x70A0522D
+        val cell = 26 * density
+        var gx = 0f
+        while (gx < w) { c.drawLine(gx, 0f, gx, h, paint); gx += cell }
+        var gy = h / 2 % cell
+        while (gy < h) { c.drawLine(0f, gy, w, gy, paint); gy += cell }
+        // novos batimentos
+        if (beatQueue.isEmpty() && (beat || now - lastPulse > (if (idle) 1100 else 1500))) {
+            lastPulse = now
+            queuePulse(0.6f + bass * 0.5f)
+        }
+        repeat(3) {
+            sweep[sweepPos] = if (beatQueue.isNotEmpty()) beatQueue.removeFirst() else (rnd.nextFloat() - 0.5f) * 0.01f
+            sweepPos = (sweepPos + 1) % cols
+        }
+        // traçado: mais forte perto da "caneta", apagando para trás, com um vão na frente
+        val mid = h * 0.55f
+        val amp = h * 0.32f
+        paint.strokeCap = Paint.Cap.ROUND
+        for (pass in 0 until 2) {
+            paint.strokeWidth = (if (pass == 0) 6f else 2f) * density
+            for (i in 0 until cols - 1) {
+                val age = ((sweepPos - 1 - i) % cols + cols) % cols          // 0 = mais novo
+                if (age > cols - 14) continue                               // vão antes da caneta
+                val j = (i + 1) % cols
+                if (j == sweepPos) continue
+                val fade = 1f - age.toFloat() / cols
+                paint.color = if (pass == 0) withAlpha(line, (60 * fade).toInt())
+                else withAlpha(mix(line, Color.WHITE, 0.2f), (255 * (0.25f + 0.75f * fade)).toInt())
+                c.drawLine(i * step, mid - sweep[i] * amp, j * step, mid - sweep[j] * amp, paint)
+            }
+        }
+        // ponto brilhante da caneta
+        val head = (sweepPos - 1 + cols) % cols
+        paint.style = Paint.Style.FILL
+        paint.color = Color.WHITE
+        c.drawCircle(head * step, mid - sweep[head] * amp, 2.5f * density, paint)
+    }
+
+    // ---- Estrada neon: carro visto de trás, luzes passando em alta velocidade ----
+    private val streakCount = 150
+    private var stTheta = FloatArray(0)
+    private var stDist = FloatArray(0)
+    private var stColor = FloatArray(0)
+    private var roadOffset = 0f
+
+    private fun resetStreak(i: Int, near: Boolean) {
+        // a maioria nas "paredes" laterais, algumas no chão e no teto
+        val side = rnd.nextInt(10)
+        val deg = when {
+            side < 4 -> -25f + rnd.nextFloat() * 40f           // direita
+            side < 8 -> 165f + rnd.nextFloat() * 40f           // esquerda
+            else -> 200f + rnd.nextFloat() * 140f              // teto
+        }
+        stTheta[i] = Math.toRadians(deg.toDouble()).toFloat()
+        stDist[i] = if (near) 0.02f + rnd.nextFloat() * 0.05f else rnd.nextFloat()
+        stColor[i] = rnd.nextFloat()
+    }
+
+    private fun drawNeonRoad(c: Canvas, n: Int, now: Long) {
+        val w = width.toFloat(); val h = areaH
+        if (stTheta.size != streakCount) {
+            stTheta = FloatArray(streakCount); stDist = FloatArray(streakCount); stColor = FloatArray(streakCount)
+            for (i in 0 until streakCount) resetStreak(i, false)
+        }
+        val avg = avgLevel(n)
+        val speed = 0.5f + avg * 2.5f + bass * 2f
+        val vpX = w / 2; val vpY = h * 0.42f
+        val reach = hypot(w, h) * 0.75f
+        paint.color = Color.BLACK
+        c.drawRect(0f, 0f, w, h, paint)
+
+        // rastros de luz
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        for (i in 0 until streakCount) {
+            stDist[i] += stDist[i] * speed * frameDt * 1.6f + 0.002f
+            if (stDist[i] > 1.1f) resetStreak(i, true)
+            val d0 = stDist[i] * reach
+            val d1 = d0 * (1.25f + speed * 0.12f)
+            val ca = cos(stTheta[i]); val sa = sin(stTheta[i])
+            paint.color = colorF(stColor[i], 0.5f + stColor[i] * 0.5f)
+            paint.alpha = (stDist[i].coerceIn(0f, 1f) * 230).toInt()
+            paint.strokeWidth = (1f + stDist[i] * 7f) * density
+            c.drawLine(vpX + ca * d0, vpY + sa * d0 * 0.6f, vpX + ca * d1, vpY + sa * d1 * 0.6f, paint)
+        }
+        paint.style = Paint.Style.FILL
+
+        // estrada
+        path.reset()
+        path.moveTo(vpX - w * 0.02f, vpY)
+        path.lineTo(vpX + w * 0.02f, vpY)
+        path.lineTo(w * 1.1f, h)
+        path.lineTo(-w * 0.1f, h)
+        path.close()
+        paint.shader = LinearGradient(0f, vpY, 0f, h, intArrayOf(0xFF05050A.toInt(), 0xFF101018.toInt()), null, Shader.TileMode.CLAMP)
+        c.drawPath(path, paint)
+        paint.shader = null
+        // faixas do meio passando
+        roadOffset = (roadOffset + frameDt * speed * 0.8f) % 1f
+        paint.color = 0x55FFFFFF
+        for (k in 0 until 8) {
+            val t0 = ((k + roadOffset) / 8f).pow(2f)
+            val t1 = ((k + roadOffset + 0.45f) / 8f).pow(2f)
+            val y0 = vpY + (h - vpY) * t0; val y1 = vpY + (h - vpY) * min(1f, t1)
+            val hw0 = 1f + t0 * 5f * density; val hw1 = 1f + t1 * 5f * density
+            path.reset()
+            path.moveTo(vpX - hw0, y0); path.lineTo(vpX + hw0, y0)
+            path.lineTo(vpX + hw1, y1); path.lineTo(vpX - hw1, y1); path.close()
+            c.drawPath(path, paint)
+        }
+
+        // carro (silhueta original, vista de trás)
+        val cw = min(w * 0.5f, h * 0.55f)
+        val ch = cw * 0.42f
+        val cx = w / 2
+        val bottom = h * 0.9f - bass * 3f * density
+        val top = bottom - ch
+        // reflexo vermelho no chão
+        val lightGlow = (150 + bass * 105).toInt().coerceAtMost(255)
+        paint.shader = LinearGradient(0f, bottom, 0f, h, intArrayOf(withAlpha(0xFFFF1A1A.toInt(), lightGlow / 2), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+        c.drawRect(cx - cw * 0.45f, bottom, cx + cw * 0.45f, h, paint)
+        paint.shader = null
+        // pneus
+        paint.color = 0xFF050505.toInt()
+        c.drawRoundRect(cx - cw * 0.48f, bottom - ch * 0.25f, cx - cw * 0.3f, bottom + ch * 0.05f, 6f, 6f, paint)
+        c.drawRoundRect(cx + cw * 0.3f, bottom - ch * 0.25f, cx + cw * 0.48f, bottom + ch * 0.05f, 6f, 6f, paint)
+        // carroceria
+        path.reset()
+        path.moveTo(cx - cw * 0.5f, bottom - ch * 0.12f)
+        path.lineTo(cx - cw * 0.5f, top + ch * 0.48f)
+        path.lineTo(cx - cw * 0.34f, top + ch * 0.36f)
+        path.lineTo(cx - cw * 0.24f, top)                       // teto
+        path.lineTo(cx + cw * 0.24f, top)
+        path.lineTo(cx + cw * 0.34f, top + ch * 0.36f)
+        path.lineTo(cx + cw * 0.5f, top + ch * 0.48f)
+        path.lineTo(cx + cw * 0.5f, bottom - ch * 0.12f)
+        path.close()
+        paint.color = 0xFF0B0B14.toInt()
+        c.drawPath(path, paint)
+        // contorno iluminado pelas luzes do túnel
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f * density
+        paint.color = withAlpha(colorF(0.8f, 0.5f), 120)
+        c.drawPath(path, paint)
+        paint.style = Paint.Style.FILL
+        // vidro traseiro
+        paint.color = 0xFF16161F.toInt()
+        c.drawRect(cx - cw * 0.2f, top + ch * 0.08f, cx + cw * 0.2f, top + ch * 0.3f, paint)
+        // lanternas (acendem mais forte nos graves)
+        val ly = top + ch * 0.55f
+        val lh = ch * 0.1f
+        for (side in listOf(-1f, 1f)) {
+            for (k in 0 until 3) {
+                val x0 = cx + side * (cw * 0.12f + k * cw * 0.1f)
+                val x1 = x0 + side * cw * 0.08f
+                paint.color = withAlpha(0xFFFF2020.toInt(), lightGlow / 3)
+                c.drawRect(min(x0, x1) - lh, ly - lh, max(x0, x1) + lh, ly + lh * 2, paint)
+                paint.color = withAlpha(0xFFFF3030.toInt(), lightGlow)
+                c.drawRect(min(x0, x1), ly, max(x0, x1), ly + lh, paint)
+            }
+        }
     }
 }

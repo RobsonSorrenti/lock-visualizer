@@ -11,7 +11,11 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.Button
+import android.widget.EditText
+import android.widget.Toast
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -26,6 +30,8 @@ class MainActivity : Activity() {
     private lateinit var preview: VisualizerView
     private lateinit var status: TextView
     private lateinit var enableSwitch: Switch
+
+    companion object { private const val PICK_IMAGE = 7 }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -79,6 +85,30 @@ class MainActivity : Activity() {
 
         col.addView(label("Estilo"))
         col.addView(radioGroup(Prefs.STYLES, s.style) { Prefs.putInt(this, Prefs.K_STYLE, it); preview.reload() })
+
+        col.addView(label("Texto do estilo \"Texto neon\" (use | para quebrar linha)"))
+        col.addView(EditText(this).apply {
+            setText(s.neonText)
+            setTextColor(Color.WHITE)
+            setSingleLine(true)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(e: Editable?) {
+                    Prefs.putString(this@MainActivity, Prefs.K_NEON, e?.toString().orEmpty())
+                    preview.reload()
+                }
+            })
+        })
+        col.addView(Button(this).apply {
+            text = "Escolher imagem/GIF (estilo \"Minha imagem/GIF\")"
+            setOnClickListener {
+                val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("image/*")
+                startActivityForResult(i, PICK_IMAGE)
+            }
+        }, LinearLayout.LayoutParams(-1, -2))
 
         col.addView(label("Cores"))
         col.addView(radioGroup(Prefs.PALETTES, s.palette) { Prefs.putInt(this, Prefs.K_PALETTE, it); preview.reload() })
@@ -191,6 +221,20 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Agora não", null)
             .show()
+    }
+
+    @Deprecated("Activity sem AndroidX")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (requestCode == PICK_IMAGE && resultCode == RESULT_OK && uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) {}
+            Prefs.putString(this, Prefs.K_IMAGE, uri.toString())
+            preview.reload()
+            Toast.makeText(this, "Imagem escolhida! Selecione o estilo \"Minha imagem/GIF\".", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
