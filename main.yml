@@ -1,0 +1,31 @@
+name: Gerar APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Organizar arquivos nas pastas certas
+        run: |
+          rm -rf app
+          mkdir -p src/main/java/com/exemplo/lockvisualizer src/main/res/values src/main/res/drawable
+          mv AndroidManifest.xml src/main/
+          mv *.kt src/main/java/com/exemplo/lockvisualizer/
+          mv strings.xml colors.xml themes.xml src/main/res/values/
+          mv ic_launcher.xml ic_stat.xml src/main/res/drawable/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LockVisualizer-apk
+          path: build/outputs/apk/debug/*.apk
